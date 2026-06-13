@@ -5,6 +5,9 @@ on:
     - cron: '30 0 * * 2-6'
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   update-sp500:
     runs-on: ubuntu-latest
