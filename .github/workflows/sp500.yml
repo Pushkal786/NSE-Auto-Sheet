@@ -1,0 +1,26 @@
+name: SP500 Updater
+
+on:
+  schedule:
+    - cron: '30 0 * * 2-6'
+  workflow_dispatch:
+
+jobs:
+  update-sp500:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Libraries
+        run: pip install gspread oauth2client pandas requests yfinance lxml html5lib beautifulsoup4
+
+      - name: Run SP500 Script
+        env:
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+        run: python update_sp500.py
