@@ -81,3 +81,91 @@ if data_to_insert:
     status_msg = f"Data Date: {fetched_date_str} | Last Update: {ist_now} (IST)"
     worksheet.update('K2', [[status_msg]])
     print("SUCCESS: Sheet Updated!")
+# ─────────────────────────────────────────
+# TELEGRAM NOTIFICATION — NIFTY FINAL LIST
+# ─────────────────────────────────────────
+import re
+
+def get_nifty_final_list(sheet):
+    """Read Final List tab and return stocks with prices"""
+    try:
+        ws_final = sheet.worksheet("Final List")
+        # Get all data from Final List tab
+        data = ws_final.get_all_values()
+        stocks = []
+        for row in data[1:]:  # skip header row
+            if row[0] and row[0].strip():  # if ticker cell is not empty
+                ticker = row[0].strip()
+                # Get live price from NSE via yfinance
+                try:
+                    import yfinance as yf
+                    price_data = yf.Ticker(f"{ticker}.NS")
+                    hist = price_data.history(period="1d")
+                    if not hist.empty:
+                        price = round(float(hist['Close'].iloc[-1]), 2)
+                        stocks.append((ticker, price))
+                    else:
+                        stocks.append((ticker, "N/A"))
+                except Exception:
+                    stocks.append((ticker, "N/A"))
+        return stocks
+    except Exception as e:
+        print(f"  Could not read Final List: {e}")
+        return []
+
+def send_telegram(bot_token, chat_id, message):
+    """Send message via Telegram bot"""
+    try:
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "HTML"
+        }
+        r = requests.post(url, json=payload, timeout=15)
+        if r.status_code == 200:
+            print("  Telegram message sent successfully.")
+        else:
+            print(f"  Telegram error: {r.status_code} {r.text}")
+    except Exception as e:
+        print(f"  Telegram send failed: {e}")
+
+# Get Telegram credentials from GitHub secrets
+bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+chat_id   = os.environ.get('TELEGRAM_CHAT_ID')
+
+if bot_token and chat_id:
+    print("\n=== SENDING NIFTY TELEGRAM ALERT ===")
+    
+    ist_time = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b-%Y %I:%M %p')
+    
+    # Get stocks from Final List tab
+    nifty_stocks = get_nifty_final_list(ss)
+    
+    if nifty_stocks:
+        lines = []
+        for ticker, price in nifty_stocks:
+            lines.append(f"  📌 <b>{ticker}</b>  ₹{price}")
+        
+        message = (
+            f"🇮🇳 <b>NIFTY SCAN RESULTS</b>\n"
+            f"🕐 {ist_time} IST\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"✅ Bull Run + CAR Buy Stocks:\n\n"
+            + "\n".join(lines) +
+            f"\n━━━━━━━━━━━━━━━━━━\n"
+            f"📊 Total: {len(nifty_stocks)} stocks\n"
+            f"⚠️ For educational purposes only"
+        )
+    else:
+        message = (
+            f"🇮🇳 <b>NIFTY SCAN RESULTS</b>\n"
+            f"🕐 {ist_time} IST\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"❌ No stocks found in Bull Run + CAR Buy today.\n"
+            f"⚠️ For educational purposes only"
+        )
+    
+    send_telegram(bot_token, chat_id, message)
+else:
+    print("  Telegram secrets not found — skipping notification.")
