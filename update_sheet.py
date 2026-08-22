@@ -21,4 +21,108 @@ client = gspread.authorize(creds)
 spreadsheet_id = "1IG1VWIPdshdn8r3i2Icpj-YlKAytzfiPAY8XxA87kt0"
 
 # ── Connect to spreadsheet object AND individual tab ──
-ss        = client.open
+ss        = client.open_by_key(spreadsheet_id)          # parent spreadsheet
+worksheet = ss.worksheet("Top 250 Stocks")              # individual tab
+
+# 2. NSE UDiFF Data Fetcher
+def fetch_bhavcopy_for_date(date_obj):
+    date_str = date_obj.strftime("%Y%m%d")
+    url = f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{date_str}_F_0000.csv.zip"
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        print(f"  Tried {date_str} -> HTTP status: {response.status_code}")
+        if response.status_code == 200:
+            with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+                csv_filename = z.namelist()[0]
+                with z.open(csv_filename) as f:
+                    df = pd.read_csv(f)
+
+                    # TEMPORARY DEBUG -- remove after we've seen the output
+                    debug_check = df[df['TckrSymb'].isin(['HDFCBSE500', 'CONSUMER'])]
+                    print("DEBUG CHECK:\n", debug_check[['TckrSymb', 'FinInstrmTp', 'SctySrs', 'ISIN']].to_string())
+
+                    sym_col   = 'TckrSymb' if 'TckrSymb' in df.columns else 'SYMBOL'
+                    close_col = 'ClsPric'  if 'ClsPric'  in df.columns else 'CLOSE'
+                    series_col = 'SctySrs' if 'SctySrs'  in df.columns else 'SERIES'
+                    
+                    vol_col = 'TtlTradgVol'
+                    for c in ['TtlTradgVol', 'TtlTrdQty', 'TotTrdQty', 'TOTTRDQTY']:
+                        if c in df.columns:
+                            vol_col = c
+                            break
+                    
+                    if series_col in df.columns:
+                        df = df[df[series_col].astype(str).str.strip() == 'EQ']
+
+                    if 'FinInstrmTp' in df.columns:
+                        df = df[df['FinInstrmTp'].astype(str).str.strip() == 'STK']
+
+                    filter_keywords = 'BEES|ETF|GOLD|LIQUID|CASE|SILVER|LIQ'
+                    df = df[~df[sym_col].astype(str).str.contains(filter_keywords, case=False, na=False)]
+                    
+                    df_top = df.sort_values(by=vol_col, ascending=False).head(250)
+                    return df_top[[sym_col, vol_col, close_col]].values.tolist()
+        return None
+    except Exception as e:
+        # TEMPORARY -- print the real error instead of silently swallowing it
+        print(f"  ERROR fetching/parsing {date_str}: {type(e).__name__}: {e}")
+        return None
+
+# 3. Execution Logic
+date          = datetime.now()
+data_to_insert = None
+fetched_date_str = ""
+
+for i in range(5):
+    test_date = date - timedelta(days=i)
+    if test_date.weekday() >= 5:
+        continue
+    data_to_insert = fetch_bhavcopy_for_date(test_date)
+    if data_to_insert:
+        fetched_date_str = test_date.strftime('%d-%b-%Y')
+        break
+
+# 4. Update Sheet
+if data_to_insert:
+    worksheet.batch_clear(['A2:C251'])
+    worksheet.update(range_name='A2', values=data_to_insert)
+    ist_now    = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b %H:%M')
+    status_msg = f"Data Date: {fetched_date_str} | Last Update: {ist_now} (IST)"
+    worksheet.update(range_name='K2', values=[[status_msg]])
+    print("SUCCESS: Sheet Updated!")
+
+    # Give the "Final List" tab's live formula time to fully recalculate
+    # off the fresh data above before we read it below.
+    time.sleep(8)
+else:
+    print("WARNING: No data fetched — sheet not updated.")
+
+# ─────────────────────────────────────────
+# TELEGRAM NOTIFICATION — NIFTY FINAL LIST
+# ─────────────────────────────────────────
+
+def get_nifty_final_list(spreadsheet):
+    """Read Final List tab and return stocks with live prices"""
+    try:
+        ws_final = spreadsheet.worksheet("Final List")
+        data     = ws_final.get_all_values()
+
+        start_idx = 0
+        for i, row in enumerate(data):
+            if row and row[0].strip().upper() == "NSE CODE":
+                start_idx = i + 1
+                break
+
+        stocks = []
+        for row in data[start_idx:]:
+            if row[0] and row[0].strip():
+                ticker = row[0].strip()
+                try:
+                    price_data = yf.Ticker(f"{ticker}.NS")
+                    hist       =
