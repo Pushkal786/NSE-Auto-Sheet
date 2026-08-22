@@ -36,15 +36,11 @@ def fetch_bhavcopy_for_date(date_obj):
     
     try:
         response = requests.get(url, headers=headers, timeout=15)
-        print(f"  Tried {date_str} -> HTTP status: {response.status_code}")
         if response.status_code == 200:
             with zipfile.ZipFile(io.BytesIO(response.content)) as z:
                 csv_filename = z.namelist()[0]
                 with z.open(csv_filename) as f:
                     df = pd.read_csv(f)
-
-                    debug_check = df[df['TckrSymb'].isin(['HDFCBSE500', 'CONSUMER'])]
-                    print("DEBUG CHECK:\n", debug_check[['TckrSymb', 'FinInstrmTp', 'SctySrs', 'ISIN']].to_string())
 
                     sym_col   = 'TckrSymb' if 'TckrSymb' in df.columns else 'SYMBOL'
                     close_col = 'ClsPric'  if 'ClsPric'  in df.columns else 'CLOSE'
@@ -59,8 +55,14 @@ def fetch_bhavcopy_for_date(date_obj):
                     if series_col in df.columns:
                         df = df[df[series_col].astype(str).str.strip() == 'EQ']
 
-                    if 'FinInstrmTp' in df.columns:
-                        df = df[df['FinInstrmTp'].astype(str).str.strip() == 'STK']
+                    # Filter by ISIN prefix -- the reliable way to separate real
+                    # equity shares from mutual fund/ETF units in India. NSDL's
+                    # ISIN numbering reserves "INE" for equity share issuers and
+                    # "INF" for mutual fund/ETF units -- this is the actual
+                    # underlying distinction, since NSE's own FinInstrmTp field
+                    # labels both as "STK" and doesn't separate them.
+                    if 'ISIN' in df.columns:
+                        df = df[df['ISIN'].astype(str).str.strip().str.startswith('INE')]
 
                     filter_keywords = 'BEES|ETF|GOLD|LIQUID|CASE|SILVER|LIQ'
                     df = df[~df[sym_col].astype(str).str.contains(filter_keywords, case=False, na=False)]
@@ -68,8 +70,7 @@ def fetch_bhavcopy_for_date(date_obj):
                     df_top = df.sort_values(by=vol_col, ascending=False).head(250)
                     return df_top[[sym_col, vol_col, close_col]].values.tolist()
         return None
-    except Exception as e:
-        print(f"  ERROR fetching/parsing {date_str}: {type(e).__name__}: {e}")
+    except:
         return None
 
 # 3. Execution Logic
