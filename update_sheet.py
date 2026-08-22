@@ -43,7 +43,6 @@ def fetch_bhavcopy_for_date(date_obj):
                 with z.open(csv_filename) as f:
                     df = pd.read_csv(f)
 
-                    # TEMPORARY DEBUG -- remove after we've seen the output
                     debug_check = df[df['TckrSymb'].isin(['HDFCBSE500', 'CONSUMER'])]
                     print("DEBUG CHECK:\n", debug_check[['TckrSymb', 'FinInstrmTp', 'SctySrs', 'ISIN']].to_string())
 
@@ -70,7 +69,6 @@ def fetch_bhavcopy_for_date(date_obj):
                     return df_top[[sym_col, vol_col, close_col]].values.tolist()
         return None
     except Exception as e:
-        # TEMPORARY -- print the real error instead of silently swallowing it
         print(f"  ERROR fetching/parsing {date_str}: {type(e).__name__}: {e}")
         return None
 
@@ -96,9 +94,6 @@ if data_to_insert:
     status_msg = f"Data Date: {fetched_date_str} | Last Update: {ist_now} (IST)"
     worksheet.update(range_name='K2', values=[[status_msg]])
     print("SUCCESS: Sheet Updated!")
-
-    # Give the "Final List" tab's live formula time to fully recalculate
-    # off the fresh data above before we read it below.
     time.sleep(8)
 else:
     print("WARNING: No data fetched — sheet not updated.")
@@ -125,4 +120,70 @@ def get_nifty_final_list(spreadsheet):
                 ticker = row[0].strip()
                 try:
                     price_data = yf.Ticker(f"{ticker}.NS")
-                    hist       =
+                    hist       = price_data.history(period="1d")
+                    if not hist.empty:
+                        price = round(float(hist['Close'].iloc[-1]), 2)
+                        stocks.append((ticker, price))
+                    else:
+                        stocks.append((ticker, "N/A"))
+                except Exception:
+                    stocks.append((ticker, "N/A"))
+        return stocks
+    except Exception as e:
+        print(f"  Could not read Final List: {e}")
+        return []
+
+def send_telegram(bot_token, chat_id, message):
+    """Send message via Telegram bot"""
+    try:
+        url     = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id"    : chat_id,
+            "text"       : message,
+            "parse_mode" : "HTML"
+        }
+        r = requests.post(url, json=payload, timeout=15)
+        if r.status_code == 200:
+            print("  Telegram message sent successfully.")
+        else:
+            print(f"  Telegram error: {r.status_code} {r.text}")
+    except Exception as e:
+        print(f"  Telegram send failed: {e}")
+
+# Get Telegram credentials from GitHub secrets
+bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+chat_id   = os.environ.get('TELEGRAM_CHAT_ID')
+
+if bot_token and chat_id:
+    print("\n=== SENDING NIFTY TELEGRAM ALERT ===")
+
+    ist_time     = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b-%Y %I:%M %p')
+    nifty_stocks = get_nifty_final_list(ss)
+
+    if nifty_stocks:
+        lines = []
+        for ticker, price in nifty_stocks:
+            lines.append(f"  📌 <b>{ticker}</b>  ₹{price}")
+
+        message = (
+            f"🇮🇳 <b>NIFTY SCAN RESULTS</b>\n"
+            f"🕐 {ist_time} IST\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"✅ Bull Run Stocks:\n\n"
+            + "\n".join(lines)
+            + f"\n━━━━━━━━━━━━━━━━━━\n"
+            f"📊 Total: {len(nifty_stocks)} stocks\n"
+            f"⚠️ For educational purposes only"
+        )
+    else:
+        message = (
+            f"🇮🇳 <b>NIFTY SCAN RESULTS</b>\n"
+            f"🕐 {ist_time} IST\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"❌ No stocks found in Bull Run today.\n"
+            f"⚠️ For educational purposes only"
+        )
+
+    send_telegram(bot_token, chat_id, message)
+else:
+    print("  Telegram secrets not found — skipping notification.")
