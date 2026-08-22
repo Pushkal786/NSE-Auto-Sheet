@@ -4,6 +4,7 @@ import pandas as pd
 import requests
 import zipfile
 import io
+import time
 from datetime import datetime, timedelta
 import os
 import json
@@ -84,6 +85,10 @@ if data_to_insert:
     status_msg = f"Data Date: {fetched_date_str} | Last Update: {ist_now} (IST)"
     worksheet.update(range_name='K2', values=[[status_msg]])
     print("SUCCESS: Sheet Updated!")
+
+    # NEW: give the "Final List" tab's live formula time to fully
+    # recalculate off the fresh data above before we read it below.
+    time.sleep(8)
 else:
     print("WARNING: No data fetched — sheet not updated.")
 
@@ -96,8 +101,20 @@ def get_nifty_final_list(spreadsheet):
     try:
         ws_final = spreadsheet.worksheet("Final List")
         data     = ws_final.get_all_values()
-        stocks   = []
-        for row in data[1:]:          # skip header row
+
+        # FIXED: find the real header row ("NSE Code") by content instead
+        # of assuming a fixed number of rows above it -- the sheet has a
+        # merged title row ABOVE the header row, so skipping just 1 row
+        # (data[1:]) was leaking the literal header text "NSE Code" into
+        # the stock list as if it were a real ticker.
+        start_idx = 0
+        for i, row in enumerate(data):
+            if row and row[0].strip().upper() == "NSE CODE":
+                start_idx = i + 1
+                break
+
+        stocks = []
+        for row in data[start_idx:]:
             if row[0] and row[0].strip():
                 ticker = row[0].strip()
                 try:
@@ -151,7 +168,7 @@ if bot_token and chat_id:
             f"🇮🇳 <b>NIFTY SCAN RESULTS</b>\n"
             f"🕐 {ist_time} IST\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"✅ Bull Run + CAR Buy Stocks:\n\n"
+            f"✅ Bull Run Stocks:\n\n"
             + "\n".join(lines)
             + f"\n━━━━━━━━━━━━━━━━━━\n"
             f"📊 Total: {len(nifty_stocks)} stocks\n"
@@ -162,7 +179,7 @@ if bot_token and chat_id:
             f"🇮🇳 <b>NIFTY SCAN RESULTS</b>\n"
             f"🕐 {ist_time} IST\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"❌ No stocks found in Bull Run + CAR Buy today.\n"
+            f"❌ No stocks found in Bull Run today.\n"
             f"⚠️ For educational purposes only"
         )
 
