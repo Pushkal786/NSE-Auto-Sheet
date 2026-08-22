@@ -41,7 +41,7 @@ def fetch_bhavcopy_for_date(date_obj):
                 csv_filename = z.namelist()[0]
                 with z.open(csv_filename) as f:
                     df = pd.read_csv(f)
-                    print("COLUMNS:", df.columns.tolist())
+                    
                     sym_col   = 'TckrSymb' if 'TckrSymb' in df.columns else 'SYMBOL'
                     close_col = 'ClsPric'  if 'ClsPric'  in df.columns else 'CLOSE'
                     series_col = 'SctySrs' if 'SctySrs'  in df.columns else 'SERIES'
@@ -54,6 +54,14 @@ def fetch_bhavcopy_for_date(date_obj):
                     
                     if series_col in df.columns:
                         df = df[df[series_col].astype(str).str.strip() == 'EQ']
+
+                    # Filter by NSE's own instrument-type classification --
+                    # 'STK' = ordinary equity share. Catches ETFs/index
+                    # products directly rather than guessing from the
+                    # symbol name alone.
+                    if 'FinInstrmTp' in df.columns:
+                        df = df[df['FinInstrmTp'].astype(str).str.strip() == 'STK']
+
                     filter_keywords = 'BEES|ETF|GOLD|LIQUID|CASE|SILVER|LIQ'
                     df = df[~df[sym_col].astype(str).str.contains(filter_keywords, case=False, na=False)]
                     
@@ -86,8 +94,8 @@ if data_to_insert:
     worksheet.update(range_name='K2', values=[[status_msg]])
     print("SUCCESS: Sheet Updated!")
 
-    # NEW: give the "Final List" tab's live formula time to fully
-    # recalculate off the fresh data above before we read it below.
+    # Give the "Final List" tab's live formula time to fully recalculate
+    # off the fresh data above before we read it below.
     time.sleep(8)
 else:
     print("WARNING: No data fetched — sheet not updated.")
@@ -102,11 +110,10 @@ def get_nifty_final_list(spreadsheet):
         ws_final = spreadsheet.worksheet("Final List")
         data     = ws_final.get_all_values()
 
-        # FIXED: find the real header row ("NSE Code") by content instead
-        # of assuming a fixed number of rows above it -- the sheet has a
+        # Find the real header row ("NSE Code") by content instead of
+        # assuming a fixed number of rows above it -- the sheet has a
         # merged title row ABOVE the header row, so skipping just 1 row
-        # (data[1:]) was leaking the literal header text "NSE Code" into
-        # the stock list as if it were a real ticker.
+        # was leaking the literal header text "NSE Code" into the list.
         start_idx = 0
         for i, row in enumerate(data):
             if row and row[0].strip().upper() == "NSE CODE":
